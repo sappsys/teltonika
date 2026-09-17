@@ -3,6 +3,7 @@ package usb
 import (
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -34,13 +35,32 @@ func TestCertSetupPayload_RootSize(t *testing.T) {
 }
 
 func TestParseCfgInfo(t *testing.T) {
-	text := "cfg_info:0:04.00.00\rcfg_info:2:FMB0:6\rcfg_info:3:350612074908128\r"
+	text := "cfg_info:0:04.00.00\rcfg_info:1:12.00.00\rcfg_info:2:FMB0:6\rcfg_info:3:350612074908128\rcfg_info:13:550\r"
 	info := ParseCfgInfo(text)
-	if info.FW != "04.00.00" || info.HWFamily != "FMB0" || info.HWVariant != "6" || info.IMEI != "350612074908128" {
+	if info.FW != "04.00.00" || info.FWRev != "550" || info.ConfigVer != "12.00.00" || info.HWFamily != "FMB0" || info.HWVariant != "6" || info.IMEI != "350612074908128" {
 		t.Fatalf("%+v", info)
+	}
+	if info.FWFull() != "04.00.00.Rev.550" {
+		t.Fatalf("FWFull %q", info.FWFull())
 	}
 	if GuessModel(info) != "FMB020" {
 		t.Fatalf("guess %q", GuessModel(info))
+	}
+}
+
+func TestIdentifyLabel(t *testing.T) {
+	label := IdentifyLabel(DeviceInfo{IMEI: "123", HWFamily: "FMB0", HWVariant: "6", FW: "04.00.00", FWRev: "550", ConfigVer: "12.00.00"})
+	want := "IMEI 123 / FMB0:6 / FW 04.00.00.Rev.550"
+	if label != want {
+		t.Fatalf("got %q want %q", label, want)
+	}
+}
+
+func TestFormatCfgInfoVerbose(t *testing.T) {
+	info := ParseCfgInfo("cfg_info:0:04.00.00\rcfg_info:13:550\r")
+	got := FormatCfgInfoVerbose(info)
+	if !strings.Contains(got, "0 firmware: 04.00.00") || !strings.Contains(got, "13 firmware revision: 550") {
+		t.Fatalf("%q", got)
 	}
 }
 
@@ -66,13 +86,6 @@ func TestVerifyParams(t *testing.T) {
 	m := VerifyParams(want, got)
 	if len(m) != 1 || m[0] != `2004: want "x" got "y"` {
 		t.Fatalf("%v", m)
-	}
-}
-
-func TestIdentifyLabel(t *testing.T) {
-	label := IdentifyLabel(DeviceInfo{IMEI: "123", HWFamily: "FMB0", HWVariant: "6", FW: "04.00.00"})
-	if label != "IMEI 123 / FMB0:6 / FW 04.00.00" {
-		t.Fatalf("%q", label)
 	}
 }
 

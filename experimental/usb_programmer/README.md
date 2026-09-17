@@ -17,9 +17,13 @@
 
 | Model | Device report (`cfg_info`) |
 |-------|----------------------------|
-| **FMB020** | FMB0:6 / FW 04.00.00 |
-| **FMC920** | FMC9:1 / FW 04.00.00 |
-| **FMP100** | FMP1:1 / FW 04.00.00 |
+| **FMB020** | FMB0:6 / FW 04.00.00.Rev.550 |
+| **FMC920** | FMC9:1 / FW 04.00.00 (Rev from field 13 when present) |
+| **FMP100** | FMP1:1 / FW 04.00.00 (Rev from field 13 when present) |
+
+`cfg_info:0` is short firmware; **`cfg_info:13` is the revision** (e.g. `550` → `Rev.550`).
+`cfg_info:1` is config/protocol (e.g. `12.00.00`). Use `-v` for a full field dump
+(and per-index probes for any gaps).
 
 Verified end-to-end on those models: identify → factory reset → program intersecting
 params → save → clear/upload TLS PEMs (`z:\cert\root.pem`, `certificate.pem.crt`,

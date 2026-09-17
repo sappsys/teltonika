@@ -7,10 +7,12 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
 
 	"go.bug.st/serial"
 	"go.bug.st/serial/enumerator"
@@ -90,12 +92,29 @@ func CertDeletePayload(path string) []byte {
 }
 
 // DeviceInfo is parsed from :cfg_info:? response.
+// Configurator queries ":cfg_info:?" (not per-field). Observed fields on FMB020:
+//
+//	0 firmware (04.00.00)  1 config/protocol (12.00.00)  2 hardware (FMB0:6)
+//	3 IMEI  12 build  13 firmware revision (550 → Rev.550)  14 modem/module string
 type DeviceInfo struct {
 	Raw       map[int]string
 	IMEI      string
-	FW        string
+	FW        string // cfg_info:0
+	FWRev     string // cfg_info:13 (numeric revision without "Rev." prefix)
+	ConfigVer string // cfg_info:1 — Configurator/protocol version (e.g. 12.00.00)
 	HWFamily  string // e.g. FMB0 from cfg_info:2:FMB0:6
 	HWVariant string // e.g. 6
+}
+
+// FWFull returns firmware with revision when known (e.g. "04.00.00.Rev.550").
+func (info DeviceInfo) FWFull() string {
+	if info.FW == "" {
+		return ""
+	}
+	if info.FWRev == "" {
+		return info.FW
+	}
+	return info.FW + ".Rev." + info.FWRev
 }
 
 func ParseCfgInfo(text string) DeviceInfo {
@@ -119,6 +138,8 @@ func ParseCfgInfo(text string) DeviceInfo {
 		info.Raw[n] = val
 	}
 	info.FW = info.Raw[0]
+	info.ConfigVer = info.Raw[1]
+	info.FWRev = info.Raw[13]
 	info.IMEI = info.Raw[3]
 	if v := info.Raw[2]; v != "" {
 		fam, ver, ok := strings.Cut(v, ":")
@@ -419,7 +440,7 @@ func Probe(portName string) (DeviceInfo, error) {
 	defer c.Close()
 	c.drain(400 * time.Millisecond)
 	_ = c.TxText(".log:0", time.Second)
-	text := c.TxText(":cfg_info:?", 2*time.Second)
+	text := string(c.TxRaw([]byte(":cfg_info:?\r"), 3*time.Second, 500*time.Millisecond))
 	if !strings.Contains(text, "cfg_info:") {
 		return DeviceInfo{}, fmt.Errorf("no cfg_info on %s", portName)
 	}
@@ -594,13 +615,61 @@ func IdentifyLabel(info DeviceInfo) string {
 		}
 		parts = append(parts, hw)
 	}
-	if info.FW != "" {
-		parts = append(parts, "FW "+info.FW)
+	if fw := info.FWFull(); fw != "" {
+		parts = append(parts, "FW "+fw)
 	}
 	if len(parts) == 0 {
 		return ""
 	}
 	return strings.Join(parts, " / ")
+}
+
+// FormatCfgInfoVerbose returns a multi-line dump of all cfg_info fields for -v.
+func FormatCfgInfoVerbose(info DeviceInfo) string {
+	if len(info.Raw) == 0 {
+		return "cfg_info: (empty)"
+	}
+	keys := make([]int, 0, len(info.Raw))
+	for k := range info.Raw {
+		keys = append(keys, k)
+	}
+	sort.Ints(keys)
+	var b strings.Builder
+	b.WriteString("cfg_info (:cfg_info:?):")
+	for _, k := range keys {
+		label := cfgInfoFieldLabel(k)
+		if label != "" {
+			fmt.Fprintf(&b, "\n  %d %s: %s", k, label, info.Raw[k])
+		} else {
+			fmt.Fprintf(&b, "\n  %d: %s", k, info.Raw[k])
+		}
+	}
+	return b.String()
+}
+
+func cfgInfoFieldLabel(n int) string {
+	switch n {
+	case 0:
+		return "firmware"
+	case 1:
+		return "config/protocol"
+	case 2:
+		return "hardware"
+	case 3:
+		return "IMEI"
+	case 5:
+		return "init"
+	case 6:
+		return "SIM"
+	case 12:
+		return "build"
+	case 13:
+		return "firmware revision"
+	case 14:
+		return "modem/module"
+	default:
+		return ""
+	}
 }
 
 // ParseGetCfgParams parses a :cfg_getcfg response into id -> value.
@@ -716,14 +785,49 @@ func (c *Client) Program(opt ProgramOptions) (*ProgramResult, error) {
 	if err := c.withStep("Identifying", opt.stepTimeout(20*time.Second), func() error {
 		c.drain(400 * time.Millisecond)
 		c.TxText(".log:0", time.Second)
-		infoText := c.TxText(":cfg_info:?", 3*time.Second)
-		if !strings.Contains(infoText, "cfg_info:") {
+		// Full dump — Configurator uses :cfg_info:? (not per-index queries).
+		// Allow enough idle time so fields through ~16 arrive (incl. Rev in field 13).
+		infoText := c.TxRaw([]byte(":cfg_info:?\r"), 4*time.Second, 500*time.Millisecond)
+		c.logf("TX %q", ":cfg_info:?")
+		if !strings.Contains(string(infoText), "cfg_info:") {
 			return fmt.Errorf("device not responding to cfg_info")
 		}
-		info := ParseCfgInfo(infoText)
+		info := ParseCfgInfo(string(infoText))
+		// If revision missing (truncated reply), probe field 13 directly.
+		if info.FWRev == "" {
+			c.logf("TX %q", ":cfg_info:13")
+			revText := string(c.TxRaw([]byte(":cfg_info:13\r"), 2*time.Second, 400*time.Millisecond))
+			if extra := ParseCfgInfo(revText); extra.Raw[13] != "" {
+				info.Raw[13] = extra.Raw[13]
+				info.FWRev = extra.Raw[13]
+			}
+		}
 		result.Info = info
 		if label := IdentifyLabel(info); label != "" {
 			opt.progress("Device Identified : " + label)
+		}
+		opt.verbose(FormatCfgInfoVerbose(info))
+		// With -v, also probe individual indices (Configurator normally only uses :?).
+		if opt.Verbose != nil {
+			var extra []string
+			for i := 0; i <= 20; i++ {
+				if _, ok := info.Raw[i]; ok {
+					continue
+				}
+				c.logf("TX %q", fmt.Sprintf(":cfg_info:%d", i))
+				reply := string(c.TxRaw([]byte(fmt.Sprintf(":cfg_info:%d\r", i)), time.Second, 300*time.Millisecond))
+				parsed := ParseCfgInfo(reply)
+				if v, ok := parsed.Raw[i]; ok && v != "" {
+					info.Raw[i] = v
+					extra = append(extra, fmt.Sprintf("%d=%s", i, v))
+				}
+			}
+			if len(extra) > 0 {
+				opt.verbose("cfg_info per-index extras: " + strings.Join(extra, ", "))
+				result.Info = info
+			} else {
+				opt.verbose("cfg_info per-index probes 0–20: no fields beyond :cfg_info:? dump")
+			}
 		}
 		return nil
 	}); err != nil {
