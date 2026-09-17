@@ -11,11 +11,14 @@
 | Item | Detail |
 |------|--------|
 | Maturity | Experimental |
-| Tested models | **FMB020**, **FMC920** only |
+| Tested models | **FMB020**, **FMC920**, **FMP100** (FMP1:1 / FW 04.00.00) |
 | Host | Linux (USB CDC serial); other OSes untested |
 | Relation to Tracker247 | Separate product; Tracker keeps its own programmer |
 
-Other models may work (same Configurator protocol) but have **not** been verified here.
+Verified end-to-end on those models: identify → factory reset → program intersecting
+params → save → clear/upload TLS PEMs (`z:\cert\root.pem`, `certificate.pem.crt`,
+`private.pem.key`) → verify. Other models may work (same Configurator protocol) but
+have **not** been verified here.
 
 ## What it does
 
