@@ -1,0 +1,43 @@
+sappsys/teltonika CHANGELOG
+===========================
+
+Go module: github.com/sappsys/teltonika
+
+Entries are newest first. Version headings match GitHub release tags.
+
+================================================================================
+
+v1.0.5 — 2026-09-17
+-------------------
+- FT / FTC / FTM ioelements: include wiki Data Sending Parameters so FT-series
+  AVL IDs decode correctly (e.g. external voltage 800, manual geofence 155–157);
+  Trip max kept at 1 so 0/1 still decode as bool
+- Experimental USB Configurator programmer under experimental/usb_programmer
+  (standalone Linux CLI, own go.mod; text + FMBX over USB; tested on FMB020 and
+  FMC920 only — unsupported / write-capable)
+- README: document the experimental USB tool at the end of the file
+
+v1.0.4 — 2026-09-17
+-------------------
+- Full non-FT Teltonika wiki regeneration for AVL/IO definitions
+- 88 supported models — adds ATC700/704/774, ATM700/704/774, FMB930 alongside
+  the existing FM/FMB/FMC/FMM/FMU/TAT/… catalog
+- Expanded AVL ID coverage (tachograph, LV-CAN, e-mobility, and related elements)
+- FT / FTC / FTM platform intentionally omitted in this release
+- Wildcard (*) lookups with a known wire size prefer the most widely supported
+  definition (device-specific quirks such as FMB930 External Voltage stay
+  model-scoped)
+- Case-duplicate wiki rows collapsed (e.g. ATC HW-support naming variants)
+
+v1.0.0 — 2026-09-17
+-------------------
+First tagged release of the Sappsys / Tracker247 maintained module.
+
+- Module path: github.com/sappsys/teltonika
+- Codec 8 / 8E / 12–16 TCP/UDP decode and encode
+- Human-readable ioelements catalog (wiki-refreshed; historical models preserved)
+- Production-hardened fixes from Tracker247 operation (AVL/IO alignment,
+  Codec 8E NX / signed element reads)
+
+Credits: originally written by Alim Zanibekov (alim-zanibekov/teltonika, MIT).
+Used by Tracker247 (https://www.tracker247.co.uk).
