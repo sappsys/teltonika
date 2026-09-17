@@ -5,6 +5,12 @@ Go library for decoding and encoding [Teltonika](https://teltonika-gps.com/) tra
 
 **Module path:** [`github.com/sappsys/teltonika`](https://github.com/sappsys/teltonika)
 
+**Latest release:** [v1.0.5](https://github.com/sappsys/teltonika/releases/tag/v1.0.5) — see [`CHANGELOG.txt`](CHANGELOG.txt)
+
+```bash
+go get github.com/sappsys/teltonika@v1.0.5
+```
+
 This repository is the **Sappsys / Tracker247** maintained distribution of the Teltonika codec
 library. It started as a fork of Alim Zanibekov’s excellent open-source work; after contributing
 fixes upstream that were not merged in a timely way, we continue development here under our own
@@ -15,7 +21,7 @@ module identity while preserving full credit and the original MIT license terms.
 - **[Tracker247](https://www.tracker247.co.uk)** — professional GPS fleet tracking
   ([tracker247.co.uk](https://www.tracker247.co.uk)): live maps, journey reports, Teltonika
   hardware, mobile apps, and Home Assistant integration. Production decoding of device telemetry
-  for Tracker247 runs on this library.
+  for Tracker247 runs on this library (**pinned at `v1.0.5`**).
 
 ## Credits
 
