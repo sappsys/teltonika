@@ -1,14 +1,51 @@
-# Teltonika codecs
+# sappsys/teltonika
 
-The `teltonika` package provides an implementation of
-[Teltonika](https://teltonika-gps.com/) tracker codecs,
-the library supports decoding regular messages from trackers
-and encoding/decoding commands and command responses
+Go library for decoding and encoding [Teltonika](https://teltonika-gps.com/) tracker codecs
+(TCP/UDP), including Codec 8, 8E, 16, 12, 13, 14 and 15, plus human-readable IO element decoding.
 
-Implemented Codec 8, 8E, 16, 12, 13, 14, 15 (tcp/udp) decode/encode
+**Module path:** [`github.com/sappsys/teltonika`](https://github.com/sappsys/teltonika)
 
-The `ioelements` package can be used to represent IO Elements in human-readable
-format, see [tools](/tools)
+This repository is the **Sappsys / Tracker247** maintained distribution of the Teltonika codec
+library. It started as a fork of Alim Zanibekov’s excellent open-source work; after contributing
+fixes upstream that were not merged in a timely way, we continue development here under our own
+module identity while preserving full credit and the original MIT license terms.
+
+## Used by
+
+- **[Tracker247](https://www.tracker247.co.uk)** — professional GPS fleet tracking
+  ([tracker247.co.uk](https://www.tracker247.co.uk)): live maps, journey reports, Teltonika
+  hardware, mobile apps, and Home Assistant integration. Production decoding of device telemetry
+  for Tracker247 runs on this library.
+
+## Credits
+
+- **Original author:** [Alim Zanibekov](https://github.com/alim-zanibekov)
+- **Original repository:** [github.com/alim-zanibekov/teltonika](https://github.com/alim-zanibekov/teltonika)
+- **License:** MIT (see [`LICENSE`](LICENSE)) — copyright of the original work remains with
+  Alim Zanibekov; subsequent modifications by Sappsys / Tracker247 contributors are also MIT.
+
+We are grateful for the solid codec foundation Alim published. This project would not exist
+without that work.
+
+## Why this repository exists
+
+While building and operating [Tracker247](https://www.tracker247.co.uk), we needed reliable
+day-to-day Teltonika AVL/IO decoding against current device firmware and wiki documentation.
+That led to concrete library improvements, including:
+
+- Aligning AVL and IO element decoding more closely with Teltonika specifications
+- Refreshing the `ioelements` catalog from the Teltonika wiki, while preserving historical model
+  coverage on regeneration
+- Codec and element read fixes exercised in production fleet traffic (for example Codec 8E NX IO
+  element handling and signed element reads)
+
+Those changes live in this repository so Tracker247 — and anyone else who wants the same
+production-hardened path — can depend on a clearly named, actively maintained module.
+
+## Packages
+
+- `teltonika` — TCP/UDP packet decode/encode for Teltonika tracker codecs
+- `ioelements` — map IO element IDs to human-readable names and values (see [`tools`](tools))
 
 ### Example
 
@@ -22,8 +59,8 @@ import (
     "encoding/json"
     "fmt"
 
-    "github.com/alim-zanibekov/teltonika"
-    "github.com/alim-zanibekov/teltonika/ioelements"
+    "github.com/sappsys/teltonika"
+    "github.com/sappsys/teltonika/ioelements"
 )
 
 func main() {
@@ -350,7 +387,7 @@ Output:
 ```text
 goos: darwin
 goarch: arm64
-pkg: github.com/alim-zanibekov/teltonika
+pkg: github.com/sappsys/teltonika
 BenchmarkTCPDecode-10                                            2556680               472.8 ns/op           405 B/op         11 allocs/op
 BenchmarkTCPDecodeReader-10                                      2203923               546.8 ns/op           517 B/op         13 allocs/op
 BenchmarkUDPDecodeSlice-10                                       1582856               697.8 ns/op          1350 B/op         38 allocs/op
@@ -365,7 +402,7 @@ BenchmarkCrc16IBMGenerateLookupTable-10                          4424582        
 BenchmarkCrc16IBMWithLookupTable-10                               455336              2641 ns/op               0 B/op          0 allocs/op
 BenchmarkCrc16IBMWithoutLookupTable-10                             47612             25130 ns/op               0 B/op          0 allocs/op
 PASS
-ok      github.com/alim-zanibekov/teltonika     22.685s
+ok      github.com/sappsys/teltonika     22.685s
 ```
 
 As you can see from the results, passing the `&teltonika.DecodeConfig{teltonika.OnReadBuffer}`

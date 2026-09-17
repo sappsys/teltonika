@@ -55,7 +55,7 @@ package main
 import (
     "fmt"
 
-    "github.com/alim-zanibekov/teltonika/ioelements"
+    "github.com/sappsys/teltonika/ioelements"
 )
 
 func main() {
