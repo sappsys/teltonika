@@ -147,13 +147,15 @@ func (r *Decoder) selectDefinition(modelName string, id uint16, wireSize int) (*
 			continue
 		}
 
+		// For unknown model ('*'), prefer the most widely supported definition so
+		// single-device quirks (e.g. FMB930 External Voltage ×0.01) do not win.
 		if wireSize > 0 && definitionMatchesWireSize(def, wireSize) {
-			if wildcardSizeMatch == nil {
+			if wildcardSizeMatch == nil || len(def.SupportedModels) > len(wildcardSizeMatch.SupportedModels) {
 				wildcardSizeMatch = def
 			}
 			continue
 		}
-		if wildcardFallback == nil {
+		if wildcardFallback == nil || len(def.SupportedModels) > len(wildcardFallback.SupportedModels) {
 			wildcardFallback = def
 		}
 	}

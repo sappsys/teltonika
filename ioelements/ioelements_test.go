@@ -100,3 +100,28 @@ func TestDecodeAnalogInput(t *testing.T) {
 		t.Fatalf("expected ~0.043, got %v", el.Value)
 	}
 }
+
+func TestWildcardExternalVoltagePrefersCommonMultiplier(t *testing.T) {
+	dec := DefaultDecoder()
+	// 12567 raw → 12.567 V with the common 0.001 multiplier (not FMB930's 0.01).
+	el, err := dec.Decode("*", 66, []byte{0x31, 0x17}) // 12567
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, ok := el.Value.(float64)
+	if !ok {
+		t.Fatalf("expected float64, got %T", el.Value)
+	}
+	if v < 12.56 || v > 12.58 {
+		t.Fatalf("expected ~12.567 V, got %v (multiplier=%v models=%d)", v, el.Definition.Multiplier, len(el.Definition.SupportedModels))
+	}
+	// Model-specific quirk still applies when FMB930 is requested.
+	el930, err := dec.Decode("FMB930", 66, []byte{0x31, 0x17})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v930, ok := el930.Value.(float64)
+	if !ok || v930 < 125.6 || v930 > 125.7 {
+		t.Fatalf("expected FMB930 ~125.67, got %v", el930.Value)
+	}
+}
