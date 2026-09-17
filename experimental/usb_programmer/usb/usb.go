@@ -101,6 +101,8 @@ func CertDeletePayload(path string) []byte {
 // Keyword.pcap: cfg_info:8:0 when Configurator prompts for a keyword; unlocked
 // captures use 8:1. Field 8 stays 0 after a successful unlock (keyword still set),
 // so treat 8==0 as "may be locked until getcfg proves otherwise".
+// Unlock on the wire is ":sec_login:<keyword>" → "<SECSTAT>…"; do NOT attempt that
+// from this tool — Teltonika allows only a small number of tries (e.g. 5).
 type DeviceInfo struct {
 	Raw       map[int]string
 	IMEI      string
@@ -826,7 +828,7 @@ func (c *Client) Program(opt ProgramOptions) (*ProgramResult, error) {
 			opt.progress("Device Identified : " + label)
 		}
 		if info.MayBeKeywordLocked() {
-			opt.progress("Warning: cfg_info:8=0 — Configurator keyword may be set (locked until getcfg succeeds)")
+			opt.progress("Warning: cfg_info:8=0 — Configurator keyword may be set (will not attempt :sec_login; limited tries)")
 		}
 		opt.verbose(FormatCfgInfoVerbose(info))
 		// With -v, also probe individual indices (Configurator normally only uses :?).
@@ -905,7 +907,7 @@ func (c *Client) Program(opt ProgramOptions) (*ProgramResult, error) {
 		opt.verbose(fmt.Sprintf("Device reported %d parameters after reset", len(defaults)))
 		if len(defaults) == 0 {
 			if result.Info.MayBeKeywordLocked() {
-				return fmt.Errorf("device returned 0 parameters (cfg_info:8=0): Configurator keyword likely set — unlock in Teltonika Configurator or clear the keyword, then retry (getcfg: %q)", truncate(raw, 80))
+				return fmt.Errorf("device returned 0 parameters (cfg_info:8=0): Configurator keyword likely set — unlock once in Teltonika Configurator (do not brute-force :sec_login; few attempts allowed), then retry (getcfg: %q)", truncate(raw, 80))
 			}
 			return fmt.Errorf("device returned 0 parameters from cfg_getcfg (%q)", truncate(raw, 80))
 		}

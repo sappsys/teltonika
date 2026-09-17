@@ -23,7 +23,7 @@
 
 `cfg_info:0` is short firmware; **`cfg_info:13` is the revision** (e.g. `550` → `Rev.550`).
 `cfg_info:1` is config/protocol (e.g. `12.00.00`).
-`cfg_info:8`: **`0` = keyword set (may lock until unlocked)**, `1` = none. Use `-v` for a full dump.
+`cfg_info:8`: **`0` = keyword set (may lock until unlocked)**, `1` = none. Unlock is `:sec_login:<keyword>` — **never sent by this tool** (few attempts). Use `-v` for a full dump.
 
 Verified end-to-end on those models: identify → factory reset → program intersecting
 params → save → clear/upload TLS PEMs (`z:\cert\root.pem`, `certificate.pem.crt`,
