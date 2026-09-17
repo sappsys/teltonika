@@ -9,8 +9,8 @@ Entries are newest first. Version headings match GitHub release tags.
 
 Unreleased
 ----------
-- Experimental USB programmer docs: add **FMP100** (FMP1:1 / FW 04.00.00) to tested
-  models alongside FMB020 and FMC920 (full program + TLS cert upload)
+- Experimental USB programmer docs: add **FMP100** (reported as FMP1:1 / FW 04.00.00)
+  to tested models alongside FMB020 and FMC920 (full program + TLS cert upload)
 
 v1.0.5 — 2026-09-17
 -------------------

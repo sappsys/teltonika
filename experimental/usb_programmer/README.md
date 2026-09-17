@@ -11,7 +11,7 @@
 | Item | Detail |
 |------|--------|
 | Maturity | Experimental |
-| Tested models | **FMB020**, **FMC920**, **FMP100** (FMP1:1 / FW 04.00.00) |
+| Tested models | **FMB020**, **FMC920**, **FMP100** (reported as FMP1:1 / FW 04.00.00) |
 | Host | Linux (USB CDC serial); other OSes untested |
 | Relation to Tracker247 | Separate product; Tracker keeps its own programmer |
 
