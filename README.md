@@ -425,7 +425,10 @@ RAM is not required (almost always?)
 > Linux CLI that programs Teltonika devices over USB (Configurator text + FMBX
 > protocol). It can factory-reset, write parameters, and upload/delete TLS PEMs.
 >
-> - **Tested on FMB020, FMC920, and FMP100** (FMP100 reported as FMP1:1 / FW 04.00.00)
+> - **Tested on:**
+>   - FMB020 — FMB0:6 / FW 04.00.00
+>   - FMC920 — FMC9:1 / FW 04.00.00
+>   - FMP100 — FMP1:1 / FW 04.00.00
 > - Separate `go.mod` — not part of the stable codec API
 > - See [experimental/usb_programmer/README.md](experimental/usb_programmer/README.md)
 >   for build, warnings, and usage

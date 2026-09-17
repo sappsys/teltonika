@@ -11,9 +11,15 @@
 | Item | Detail |
 |------|--------|
 | Maturity | Experimental |
-| Tested models | **FMB020**, **FMC920**, **FMP100** (reported as FMP1:1 / FW 04.00.00) |
+| Tested models | See table below |
 | Host | Linux (USB CDC serial); other OSes untested |
 | Relation to Tracker247 | Separate product; Tracker keeps its own programmer |
+
+| Model | Device report (`cfg_info`) |
+|-------|----------------------------|
+| **FMB020** | FMB0:6 / FW 04.00.00 |
+| **FMC920** | FMC9:1 / FW 04.00.00 |
+| **FMP100** | FMP1:1 / FW 04.00.00 |
 
 Verified end-to-end on those models: identify → factory reset → program intersecting
 params → save → clear/upload TLS PEMs (`z:\cert\root.pem`, `certificate.pem.crt`,
