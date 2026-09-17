@@ -1,0 +1,5 @@
+/usb_programmer
+/usb_programmer.exe
+*.exe
+*.test
+/bin/

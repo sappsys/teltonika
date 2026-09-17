@@ -1,0 +1,13 @@
+# Comments start with #. Format: id:value per line.
+# This is a minimal EXAMPLE only — not a production fleet config.
+# Adjust for your device; unsupported IDs are skipped automatically.
+
+# Ignition settings (see Teltonika docs / Configurator)
+# 7 = Digital Input, Accelerometer, or Power Voltage
+101:7
+
+# Movement Source: 3 = Ignition+Accelerometer
+138:3
+
+# Ignition Source Operand: 0 = OR, 1 = AND
+271:0

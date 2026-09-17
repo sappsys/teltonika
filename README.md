@@ -47,6 +47,20 @@ production-hardened path — can depend on a clearly named, actively maintained 
 - `teltonika` — TCP/UDP packet decode/encode for Teltonika tracker codecs
 - `ioelements` — map IO element IDs to human-readable names and values (see [`tools`](tools))
 
+### Experimental: USB Configurator programmer
+
+> **Experimental / unsupported.**  
+> [`experimental/usb_programmer`](experimental/usb_programmer) is a **standalone**
+> Linux CLI that programs Teltonika devices over USB (Configurator text + FMBX
+> protocol). It can factory-reset, write parameters, and upload/delete TLS PEMs.
+>
+> - **Tested only on FMB020 and FMC920**
+> - Separate `go.mod` — not part of the stable codec API
+> - See [experimental/usb_programmer/README.md](experimental/usb_programmer/README.md)
+>   for build, warnings, and usage
+>
+> Do **not** treat this as production-ready for untested models.
+
 ### Example
 
 > more examples in [examples](/examples) folder (see [examples/README.md](/examples/README.md))
