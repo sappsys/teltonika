@@ -95,7 +95,12 @@ func CertDeletePayload(path string) []byte {
 // Configurator queries ":cfg_info:?" (not per-field). Observed fields on FMB020:
 //
 //	0 firmware (04.00.00)  1 config/protocol (12.00.00)  2 hardware (FMB0:6)
-//	3 IMEI  12 build  13 firmware revision (550 → Rev.550)  14 modem/module string
+//	3 IMEI  8 keyword (0=configured / may lock Configurator, 1=none)
+//	12 build  13 firmware revision (550 → Rev.550)  14 modem/module string
+//
+// Keyword.pcap: cfg_info:8:0 when Configurator prompts for a keyword; unlocked
+// captures use 8:1. Field 8 stays 0 after a successful unlock (keyword still set),
+// so treat 8==0 as "may be locked until getcfg proves otherwise".
 type DeviceInfo struct {
 	Raw       map[int]string
 	IMEI      string
@@ -104,6 +109,8 @@ type DeviceInfo struct {
 	ConfigVer string // cfg_info:1 — Configurator/protocol version (e.g. 12.00.00)
 	HWFamily  string // e.g. FMB0 from cfg_info:2:FMB0:6
 	HWVariant string // e.g. 6
+	// KeywordConfigured is true when cfg_info:8 is "0" (Configurator security keyword set).
+	KeywordConfigured bool
 }
 
 // FWFull returns firmware with revision when known (e.g. "04.00.00.Rev.550").
@@ -115,6 +122,12 @@ func (info DeviceInfo) FWFull() string {
 		return info.FW
 	}
 	return info.FW + ".Rev." + info.FWRev
+}
+
+// MayBeKeywordLocked reports that a Configurator keyword appears to be set
+// (cfg_info:8==0). Confirm with a successful cfg_getcfg (non-zero params).
+func (info DeviceInfo) MayBeKeywordLocked() bool {
+	return info.KeywordConfigured
 }
 
 func ParseCfgInfo(text string) DeviceInfo {
@@ -141,6 +154,10 @@ func ParseCfgInfo(text string) DeviceInfo {
 	info.ConfigVer = info.Raw[1]
 	info.FWRev = info.Raw[13]
 	info.IMEI = info.Raw[3]
+	// 0 = keyword configured (may block getcfg until unlocked); 1 = no keyword.
+	if v, ok := info.Raw[8]; ok {
+		info.KeywordConfigured = v == "0"
+	}
 	if v := info.Raw[2]; v != "" {
 		fam, ver, ok := strings.Cut(v, ":")
 		if ok {
@@ -661,6 +678,8 @@ func cfgInfoFieldLabel(n int) string {
 		return "init"
 	case 6:
 		return "SIM"
+	case 8:
+		return "keyword (0=set/may lock, 1=none)"
 	case 12:
 		return "build"
 	case 13:
@@ -806,6 +825,9 @@ func (c *Client) Program(opt ProgramOptions) (*ProgramResult, error) {
 		if label := IdentifyLabel(info); label != "" {
 			opt.progress("Device Identified : " + label)
 		}
+		if info.MayBeKeywordLocked() {
+			opt.progress("Warning: cfg_info:8=0 — Configurator keyword may be set (locked until getcfg succeeds)")
+		}
 		opt.verbose(FormatCfgInfoVerbose(info))
 		// With -v, also probe individual indices (Configurator normally only uses :?).
 		if opt.Verbose != nil {
@@ -819,6 +841,9 @@ func (c *Client) Program(opt ProgramOptions) (*ProgramResult, error) {
 				parsed := ParseCfgInfo(reply)
 				if v, ok := parsed.Raw[i]; ok && v != "" {
 					info.Raw[i] = v
+					if i == 8 {
+						info.KeywordConfigured = v == "0"
+					}
 					extra = append(extra, fmt.Sprintf("%d=%s", i, v))
 				}
 			}
@@ -871,13 +896,23 @@ func (c *Client) Program(opt ProgramOptions) (*ProgramResult, error) {
 	opt.progress("Checking Defaults")
 	if err := c.withStep("Checking Defaults", opt.stepTimeout(60*time.Second), func() error {
 		var err error
-		defaults, _, err = c.GetCfg(10 * time.Second)
+		defaults, raw, err := c.GetCfg(10 * time.Second)
 		if err != nil {
 			return fmt.Errorf("checking defaults: %w", err)
 		}
 		result.DeviceParams = len(defaults)
 		c.logf("device reported %d parameters", len(defaults))
 		opt.verbose(fmt.Sprintf("Device reported %d parameters after reset", len(defaults)))
+		if len(defaults) == 0 {
+			if result.Info.MayBeKeywordLocked() {
+				return fmt.Errorf("device returned 0 parameters (cfg_info:8=0): Configurator keyword likely set — unlock in Teltonika Configurator or clear the keyword, then retry (getcfg: %q)", truncate(raw, 80))
+			}
+			return fmt.Errorf("device returned 0 parameters from cfg_getcfg (%q)", truncate(raw, 80))
+		}
+		// Successful getcfg proves the session is usable even if a keyword is configured.
+		if result.Info.MayBeKeywordLocked() {
+			opt.progress("Keyword configured (cfg_info:8=0) but getcfg OK — continuing")
+		}
 		return nil
 	}); err != nil {
 		return result, err

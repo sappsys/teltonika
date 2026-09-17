@@ -35,16 +35,23 @@ func TestCertSetupPayload_RootSize(t *testing.T) {
 }
 
 func TestParseCfgInfo(t *testing.T) {
-	text := "cfg_info:0:04.00.00\rcfg_info:1:12.00.00\rcfg_info:2:FMB0:6\rcfg_info:3:350612074908128\rcfg_info:13:550\r"
+	text := "cfg_info:0:04.00.00\rcfg_info:1:12.00.00\rcfg_info:2:FMB0:6\rcfg_info:3:350612074908128\rcfg_info:8:0\rcfg_info:13:550\r"
 	info := ParseCfgInfo(text)
 	if info.FW != "04.00.00" || info.FWRev != "550" || info.ConfigVer != "12.00.00" || info.HWFamily != "FMB0" || info.HWVariant != "6" || info.IMEI != "350612074908128" {
 		t.Fatalf("%+v", info)
+	}
+	if !info.KeywordConfigured || !info.MayBeKeywordLocked() {
+		t.Fatalf("expected keyword configured from cfg_info:8=0")
 	}
 	if info.FWFull() != "04.00.00.Rev.550" {
 		t.Fatalf("FWFull %q", info.FWFull())
 	}
 	if GuessModel(info) != "FMB020" {
 		t.Fatalf("guess %q", GuessModel(info))
+	}
+	unlocked := ParseCfgInfo("cfg_info:8:1\r")
+	if unlocked.KeywordConfigured || unlocked.MayBeKeywordLocked() {
+		t.Fatalf("cfg_info:8=1 should mean no keyword")
 	}
 }
 
