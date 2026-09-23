@@ -147,5 +147,3 @@ func TestIsStepTimeout(t *testing.T) {
 		t.Fatal("unexpected")
 	}
 }
-
-

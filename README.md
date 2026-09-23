@@ -422,8 +422,9 @@ RAM is not required (almost always?)
 
 > **Experimental / unsupported.**  
 > [`experimental/usb_programmer`](experimental/usb_programmer) is a **standalone**
-> Linux CLI that programs Teltonika devices over USB (Configurator text + FMBX
-> protocol). It can factory-reset, write parameters, and upload/delete TLS PEMs.
+> Linux/Windows CLI that programs Teltonika devices over USB (Configurator text +
+> FMBX protocol). It can unlock a Configurator keyword, factory-reset, write
+> parameters, and upload/delete TLS PEMs. It does **not** flash firmware.
 >
 > - **Tested on:**
 >   - FMB020 — FMB0:6 / FW 04.00.00

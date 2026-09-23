@@ -9,9 +9,10 @@ Entries are newest first. Version headings match GitHub release tags.
 
 Unreleased
 ----------
-- Experimental USB programmer docs: tested models with device IDs —
-  FMB020 (FMB0:6 / FW 04.00.00), FMC920 (FMC9:1 / FW 04.00.00),
-  FMP100 (FMP1:1 / FW 04.00.00); full program + TLS cert upload
+- Experimental USB programmer: config + TLS cert program/verify, operator-supplied
+  keyword unlock (--keyword / interactive prompt), --no-reboot; Linux + Windows builds
+- Docs: tested models FMB020 / FMC920 / FMP100 with device IDs
+- Experimental tool does not flash firmware
 
 v1.0.5 — 2026-09-17
 -------------------

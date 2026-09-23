@@ -1,16 +1,24 @@
 #!/usr/bin/env bash
-# Build usb_programmer for the current OS/arch (CGO disabled).
+# Build usb_programmer for Linux and Windows (CGO disabled).
 set -euo pipefail
 DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$DIR"
 
 export CGO_ENABLED=0
-export GOOS="${GOOS:-$(go env GOOS)}"
-export GOARCH="${GOARCH:-$(go env GOARCH)}"
 
-OUT="${OUT:-usb_programmer}"
-echo "==> building ${OUT} (${GOOS}/${GOARCH})"
+echo "==> go test ./usb/"
 go test ./usb/
-go build -o "$OUT" .
-echo "Built: $DIR/$OUT"
-echo "Example: ./$OUT --config example/example.txt"
+
+echo "==> usb_programmer (linux/amd64)"
+GOOS=linux GOARCH=amd64 go build -o "$DIR/usb_programmer" .
+
+echo "==> usb_programmer.exe (windows/amd64)"
+GOOS=windows GOARCH=amd64 go build -o "$DIR/usb_programmer.exe" .
+
+echo
+echo "Built:"
+echo "  $DIR/usb_programmer"
+echo "  $DIR/usb_programmer.exe"
+echo
+echo "Example:"
+echo "  ./usb_programmer --config example/example.txt --keyword WORD"

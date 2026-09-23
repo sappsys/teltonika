@@ -1,5 +1,5 @@
-// Package usb talks to Teltonika trackers over USB CDC serial using the
-// Configurator text + FMBX protocol (experimental USB programmer).
+// Package usb talks to Teltonika trackers over USB CDC serial
+// using the Configurator text + FMBX protocol captured from USBPcap.
 package usb
 
 import (
@@ -12,7 +12,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
 
 	"go.bug.st/serial"
 	"go.bug.st/serial/enumerator"
@@ -99,10 +98,9 @@ func CertDeletePayload(path string) []byte {
 //	12 build  13 firmware revision (550 → Rev.550)  14 modem/module string
 //
 // Keyword.pcap: cfg_info:8:0 when Configurator prompts for a keyword; unlocked
-// captures use 8:1. Field 8 stays 0 after a successful unlock (keyword still set),
-// so treat 8==0 as "may be locked until getcfg proves otherwise".
-// Unlock on the wire is ":sec_login:<keyword>" → "<SECSTAT>…"; do NOT attempt that
-// from this tool — Teltonika allows only a small number of tries (e.g. 5).
+// captures use 8:1. Field 8 stays 0 after a successful unlock (keyword still set).
+// Unlock on the wire is ":sec_login:<keyword>" → "<SECSTAT>…". Program_Tracker
+// prompts interactively when :sec_status shows secured but not authorized.
 type DeviceInfo struct {
 	Raw       map[int]string
 	IMEI      string
@@ -152,10 +150,10 @@ func ParseCfgInfo(text string) DeviceInfo {
 		}
 		info.Raw[n] = val
 	}
-	info.FW = info.Raw[0]
-	info.ConfigVer = info.Raw[1]
-	info.FWRev = info.Raw[13]
-	info.IMEI = info.Raw[3]
+	info.FW = strings.TrimSpace(info.Raw[0])
+	info.ConfigVer = strings.TrimSpace(info.Raw[1])
+	info.FWRev = strings.TrimSpace(info.Raw[13])
+	info.IMEI = strings.TrimSpace(info.Raw[3])
 	// 0 = keyword configured (may block getcfg until unlocked); 1 = no keyword.
 	if v, ok := info.Raw[8]; ok {
 		info.KeywordConfigured = v == "0"
@@ -284,6 +282,8 @@ func Open(portName string) (*Client, error) {
 		return nil, err
 	}
 	_ = p.SetReadTimeout(100 * time.Millisecond)
+	_ = p.SetDTR(true)
+	_ = p.SetRTS(true)
 	c := &Client{port: p, seq: 1, logf: func(string, ...any) {}}
 	return c, nil
 }
@@ -412,13 +412,42 @@ func (c *Client) TxRaw(data []byte, wait, idle time.Duration) []byte {
 	return c.readWindow(wait, idle)
 }
 
+// txRawHard wraps TxRaw with an outer deadline and closes the port on expiry so
+// a stuck USB Write/Read cannot hang the process.
+func (c *Client) txRawHard(data []byte, wait, idle, hard time.Duration) []byte {
+	if hard <= wait {
+		hard = wait + time.Second
+	}
+	ch := make(chan []byte, 1)
+	go func() {
+		ch <- c.TxRaw(data, wait, idle)
+	}()
+	select {
+	case b := <-ch:
+		return b
+	case <-time.After(hard):
+		_ = c.Close()
+		select {
+		case b := <-ch:
+			return b
+		case <-time.After(200 * time.Millisecond):
+			return nil
+		}
+	}
+}
+
 // TxText sends a Configurator text command ending in CR.
+// Uses a hard outer deadline so a wedged USB Write cannot hang forever.
 func (c *Client) TxText(cmd string, wait time.Duration) string {
 	if !strings.HasSuffix(cmd, "\r") {
 		cmd += "\r"
 	}
 	c.logf("TX %q", strings.TrimSuffix(cmd, "\r"))
-	resp := c.TxRaw([]byte(cmd), wait, 350*time.Millisecond)
+	hard := wait + 2*time.Second
+	if hard < 3*time.Second {
+		hard = 3 * time.Second
+	}
+	resp := c.txRawHard([]byte(cmd), wait, 350*time.Millisecond, hard)
 	text := string(resp)
 	for i, ln := range strings.Split(text, "\n") {
 		ln = strings.TrimSpace(strings.TrimSuffix(ln, "\r"))
@@ -446,11 +475,49 @@ func (c *Client) TxFMBX(opcode uint16, payload []byte, wait time.Duration) []byt
 
 func (c *Client) Handshake() {
 	for _, body := range [][]byte{{0x03, 0x16}, {0x03, 0x23}, {0x03, 0x2a}} {
+		if c.isClosed() {
+			return
+		}
 		c.TxFMBX(0x0038, body, 800*time.Millisecond)
 	}
 }
 
-// Probe opens briefly and checks for a Teltonika cfg_info response.
+// cfgConnect runs Handshake then :cfg_connect until CFG_CONNECT is seen.
+// Never sends .log:0 — that Write wedges post-DFU CDC and txRawHard closes the port,
+// after which every later TX looks successful in the log but returns "".
+func (c *Client) cfgConnect(attempts int) error {
+	if attempts < 1 {
+		attempts = 1
+	}
+	var last string
+	for i := 1; i <= attempts; i++ {
+		if c.isClosed() {
+			return fmt.Errorf("cfg_connect: port closed (prior USB Write wedged)")
+		}
+		if i > 1 {
+			time.Sleep(time.Duration(i) * 400 * time.Millisecond)
+		}
+		c.drain(150 * time.Millisecond)
+		c.Handshake()
+		c.drain(150 * time.Millisecond)
+		if c.isClosed() {
+			return fmt.Errorf("cfg_connect: port closed during handshake")
+		}
+		last = c.TxText(":cfg_connect", 3*time.Second)
+		if strings.Contains(strings.ToUpper(last), "CFG_CONNECT") {
+			c.TxFMBX(0x0038, []byte{0x03, 0x10}, 800*time.Millisecond)
+			return nil
+		}
+		c.logf("cfg_connect attempt %d/%d: %q", i, attempts, truncate(last, 80))
+	}
+	if c.isClosed() {
+		return fmt.Errorf("cfg_connect: port closed (prior USB Write wedged)")
+	}
+	return fmt.Errorf("cfg_connect failed: %q", truncate(last, 120))
+}
+
+// Probe opens briefly and checks for a Teltonika response.
+// Keyword-locked sessions often silence cfg_info; :sec_status still answers.
 func Probe(portName string) (DeviceInfo, error) {
 	c, err := Open(portName)
 	if err != nil {
@@ -460,10 +527,15 @@ func Probe(portName string) (DeviceInfo, error) {
 	c.drain(400 * time.Millisecond)
 	_ = c.TxText(".log:0", time.Second)
 	text := string(c.TxRaw([]byte(":cfg_info:?\r"), 3*time.Second, 500*time.Millisecond))
-	if !strings.Contains(text, "cfg_info:") {
-		return DeviceInfo{}, fmt.Errorf("no cfg_info on %s", portName)
+	if strings.Contains(text, "cfg_info:") {
+		return ParseCfgInfo(text), nil
 	}
-	return ParseCfgInfo(text), nil
+	c.Handshake()
+	stText := c.TxText(":sec_status", 2*time.Second)
+	if _, ok := ParseSecStat(stText); ok {
+		return DeviceInfo{}, nil
+	}
+	return DeviceInfo{}, fmt.Errorf("no cfg_info/sec_status on %s", portName)
 }
 
 // FindTracker probes candidate ports and returns the first Teltonika device found.
@@ -519,11 +591,15 @@ type ProgramOptions struct {
 	Cert        []byte
 	ClearCerts  bool          // delete device TLS PEMs (Configurator Security delete)
 	SkipReset   bool          // debug: skip cfg_default (+ its save)
+	SkipReboot  bool          // debug: skip .reset after successful program
 	StepTimeout time.Duration // hard deadline per named step (default DefaultStepTimeout)
 	// Progress prints user-facing status lines (no trailing newline added by caller).
 	Progress func(string)
 	// Verbose prints extra diagnostics (parameter filter summary, counts, etc.).
 	Verbose func(string)
+	// PromptKeyword asks for the Configurator keyword when the session is locked.
+	// Return ("", err) to abort. Nil means unlock cannot be attempted interactively.
+	PromptKeyword func() (string, error)
 }
 
 func (opt ProgramOptions) progress(msg string) {
@@ -538,11 +614,15 @@ func (opt ProgramOptions) verbose(msg string) {
 	}
 }
 
-func (opt ProgramOptions) stepTimeout(_ time.Duration) time.Duration {
-	if opt.StepTimeout > 0 {
+func (opt ProgramOptions) stepTimeout(def time.Duration) time.Duration {
+	if def <= 0 {
+		def = DefaultStepTimeout
+	}
+	// --timeout extends steps; it must not shrink long stages (getcfg, keyword prompt, …).
+	if opt.StepTimeout > def {
 		return opt.StepTimeout
 	}
-	return DefaultStepTimeout
+	return def
 }
 
 // ProgramResult summarizes a programming run.
@@ -721,7 +801,7 @@ func ParseGetCfgParams(text string) map[string]string {
 		if !allDigits {
 			continue
 		}
-		out[id] = val
+		out[id] = strings.TrimSpace(val)
 	}
 	return out
 }
@@ -784,15 +864,59 @@ func VerifyParams(want []Param, got map[string]string) []string {
 }
 
 // GetCfg runs :cfg_getcfg and returns parsed parameters.
+// Full dumps are ~7k lines and often pause mid-transfer — must not use TxText's
+// short idle/hard deadlines (those truncate the map and close the port).
 func (c *Client) GetCfg(wait time.Duration) (map[string]string, string, error) {
 	if wait <= 0 {
-		wait = 8 * time.Second
+		wait = 45 * time.Second
 	}
-	text := c.TxText(":cfg_getcfg", wait)
-	if !strings.Contains(text, "GET_PARAMS_START") && !strings.Contains(text, ":") {
+	if c.isClosed() {
+		return nil, "", fmt.Errorf("cfg_getcfg: port closed")
+	}
+	c.logf("TX %q", ":cfg_getcfg")
+	raw := c.txRawHard([]byte(":cfg_getcfg\r"), wait, 2*time.Second, wait+5*time.Second)
+	text := string(raw)
+	if c.isClosed() && !strings.Contains(text, "GET_PARAMS_END") {
+		return nil, text, fmt.Errorf("cfg_getcfg: port closed before GET_PARAMS_END (dump truncated)")
+	}
+	if !strings.Contains(text, "GET_PARAMS_START") {
 		return nil, text, fmt.Errorf("cfg_getcfg failed: %q", truncate(text, 160))
 	}
-	return ParseGetCfgParams(text), text, nil
+	if !strings.Contains(text, "GET_PARAMS_END") {
+		return nil, text, fmt.Errorf("cfg_getcfg incomplete: no GET_PARAMS_END (%d bytes, %d ids)", len(text), len(ParseGetCfgParams(text)))
+	}
+	params := ParseGetCfgParams(text)
+	if len(params) == 0 {
+		return nil, text, fmt.Errorf("cfg_getcfg returned 0 parameters")
+	}
+	return params, text, nil
+}
+
+// queryCfgInfo asks :cfg_info:? with retries. Right after :sec_login the device
+// sometimes needs a moment before cfg_info answers again.
+func (c *Client) queryCfgInfo(attempts int, verbose func(string)) (DeviceInfo, error) {
+	if attempts < 1 {
+		attempts = 1
+	}
+	var last string
+	for i := 1; i <= attempts; i++ {
+		if i > 1 {
+			time.Sleep(time.Duration(i) * 400 * time.Millisecond)
+			c.drain(200 * time.Millisecond)
+		} else {
+			c.drain(200 * time.Millisecond)
+		}
+		raw := c.TxRaw([]byte(":cfg_info:?\r"), 4*time.Second, 500*time.Millisecond)
+		c.logf("TX %q (attempt %d/%d)", ":cfg_info:?", i, attempts)
+		last = string(raw)
+		if strings.Contains(last, "cfg_info:") {
+			return ParseCfgInfo(last), nil
+		}
+		if verbose != nil {
+			verbose(fmt.Sprintf("cfg_info attempt %d/%d: no reply (%q)", i, attempts, truncate(last, 80)))
+		}
+	}
+	return DeviceInfo{}, fmt.Errorf("device not responding to cfg_info")
 }
 
 // Program resets to defaults, discovers accepted params via getcfg, writes
@@ -802,18 +926,25 @@ func (c *Client) Program(opt ProgramOptions) (*ProgramResult, error) {
 	result := &ProgramResult{FileParams: len(opt.Params)}
 	var defaults map[string]string
 
-	opt.progress("Identifying")
-	if err := c.withStep("Identifying", opt.stepTimeout(20*time.Second), func() error {
+	// Keyword lock can silence cfg_info / getcfg — unlock before Identifying.
+	// :sec_login can lag behind :sec_status (AT "Command not found"); retry as boot
+	// noise. Keyword prompt alone needs ≥40s so typing is not cut off by the step deadline.
+	kwTimeout := 40 * time.Second
+	opt.progress("Checking keyword lock")
+	if err := c.withStep("Checking keyword lock", opt.stepTimeout(kwTimeout), func() error {
 		c.drain(400 * time.Millisecond)
-		c.TxText(".log:0", time.Second)
-		// Full dump — Configurator uses :cfg_info:? (not per-index queries).
-		// Allow enough idle time so fields through ~16 arrive (incl. Rev in field 13).
-		infoText := c.TxRaw([]byte(":cfg_info:?\r"), 4*time.Second, 500*time.Millisecond)
-		c.logf("TX %q", ":cfg_info:?")
-		if !strings.Contains(string(infoText), "cfg_info:") {
-			return fmt.Errorf("device not responding to cfg_info")
+		time.Sleep(500 * time.Millisecond)
+		return c.EnsureKeywordUnlocked(opt.Progress, opt.Verbose, opt.PromptKeyword)
+	}); err != nil {
+		return result, err
+	}
+
+	opt.progress("Identifying")
+	if err := c.withStep("Identifying", opt.stepTimeout(45*time.Second), func() error {
+		info, err := c.queryCfgInfo(5, opt.Verbose)
+		if err != nil {
+			return err
 		}
-		info := ParseCfgInfo(string(infoText))
 		// If revision missing (truncated reply), probe field 13 directly.
 		if info.FWRev == "" {
 			c.logf("TX %q", ":cfg_info:13")
@@ -828,7 +959,7 @@ func (c *Client) Program(opt ProgramOptions) (*ProgramResult, error) {
 			opt.progress("Device Identified : " + label)
 		}
 		if info.MayBeKeywordLocked() {
-			opt.progress("Warning: cfg_info:8=0 — Configurator keyword may be set (will not attempt :sec_login; limited tries)")
+			opt.progress("Configurator keyword is set on this device (session unlocked)")
 		}
 		opt.verbose(FormatCfgInfoVerbose(info))
 		// With -v, also probe individual indices (Configurator normally only uses :?).
@@ -862,16 +993,8 @@ func (c *Client) Program(opt ProgramOptions) (*ProgramResult, error) {
 	}
 
 	opt.progress("Connecting")
-	if err := c.withStep("Connecting", opt.stepTimeout(20*time.Second), func() error {
-		_ = c.TxText(".log:0", time.Second)
-		c.drain(200 * time.Millisecond)
-		c.Handshake()
-		conn := c.TxText(":cfg_connect", 1500*time.Millisecond)
-		if !strings.Contains(conn, "CFG_CONNECT") {
-			return fmt.Errorf("cfg_connect failed: %q", truncate(conn, 120))
-		}
-		c.TxFMBX(0x0038, []byte{0x03, 0x10}, 800*time.Millisecond)
-		return nil
+	if err := c.withStep("Connecting", opt.stepTimeout(30*time.Second), func() error {
+		return c.cfgConnect(4)
 	}); err != nil {
 		return result, err
 	}
@@ -896,18 +1019,18 @@ func (c *Client) Program(opt ProgramOptions) (*ProgramResult, error) {
 	}
 
 	opt.progress("Checking Defaults")
-	if err := c.withStep("Checking Defaults", opt.stepTimeout(60*time.Second), func() error {
-		var err error
-		defaults, raw, err := c.GetCfg(10 * time.Second)
+	if err := c.withStep("Checking Defaults", opt.stepTimeout(90*time.Second), func() error {
+		got, raw, err := c.GetCfg(45 * time.Second)
 		if err != nil {
 			return fmt.Errorf("checking defaults: %w", err)
 		}
+		defaults = got
 		result.DeviceParams = len(defaults)
 		c.logf("device reported %d parameters", len(defaults))
 		opt.verbose(fmt.Sprintf("Device reported %d parameters after reset", len(defaults)))
 		if len(defaults) == 0 {
 			if result.Info.MayBeKeywordLocked() {
-				return fmt.Errorf("device returned 0 parameters (cfg_info:8=0): Configurator keyword likely set — unlock once in Teltonika Configurator (do not brute-force :sec_login; few attempts allowed), then retry (getcfg: %q)", truncate(raw, 80))
+				return fmt.Errorf("device returned 0 parameters (cfg_info:8=0): Configurator keyword still blocking getcfg after unlock attempt (getcfg: %q)", truncate(raw, 80))
 			}
 			return fmt.Errorf("device returned 0 parameters from cfg_getcfg (%q)", truncate(raw, 80))
 		}
@@ -927,7 +1050,16 @@ func (c *Client) Program(opt ProgramOptions) (*ProgramResult, error) {
 	opt.verbose(fmt.Sprintf("Filter: program %d, skip default %d, unsupported %d",
 		len(filtered.Keep), len(filtered.Unchanged), len(filtered.Unsupported)))
 
-	opt.progress(fmt.Sprintf("Programming %d/%d Parameters", len(filtered.Keep), len(opt.Params)))
+	opt.progress(fmt.Sprintf("Programming %d/%d Parameters (%d already match, %d not on device)",
+		len(filtered.Keep), len(opt.Params), len(filtered.Unchanged), len(filtered.Unsupported)))
+
+	// After a factory reset, a non-default site config must differ somewhere.
+	// Keep==0 almost always means getcfg was truncated/stale or IDs failed to parse.
+	if !opt.SkipReset && len(opt.Params) > 0 && len(filtered.Keep) == 0 {
+		return result, fmt.Errorf("after factory reset nothing to program (%d already match, %d not on device of %d) — getcfg likely incomplete or config IDs unrecognized",
+			len(filtered.Unchanged), len(filtered.Unsupported), len(opt.Params))
+	}
+
 	if len(filtered.Keep) > 0 {
 		batches := batchSetparams(filtered.Keep, 1000)
 		result.Batches = len(batches)
@@ -1001,9 +1133,9 @@ func (c *Client) Program(opt ProgramOptions) (*ProgramResult, error) {
 	}
 
 	opt.progress("Verifying")
-	if err := c.withStep("Verifying", opt.stepTimeout(60*time.Second), func() error {
+	if err := c.withStep("Verifying", opt.stepTimeout(90*time.Second), func() error {
 		_ = c.TxText(":cfg_connect", 1500*time.Millisecond)
-		got, _, err := c.GetCfg(10 * time.Second)
+		got, _, err := c.GetCfg(45 * time.Second)
 		if err != nil {
 			return fmt.Errorf("verify read failed: %w", err)
 		}
@@ -1026,6 +1158,23 @@ func (c *Client) Program(opt ProgramOptions) (*ProgramResult, error) {
 		return nil
 	}); err != nil {
 		return result, err
+	}
+
+	if !opt.SkipReboot {
+		opt.progress("Rebooting")
+		if err := c.withStep("Rebooting", opt.stepTimeout(10*time.Second), func() error {
+			if c.isClosed() {
+				return fmt.Errorf("port closed before reboot")
+			}
+			c.drain(100 * time.Millisecond)
+			// Configurator "Reboot device" wire command (Teltonika.Configurator): ".reset\r"
+			// Device usually drops USB with little/no reply — empty is success.
+			_ = c.TxText(".reset", 1500*time.Millisecond)
+			opt.progress("Reboot sent — USB will drop")
+			return nil
+		}); err != nil {
+			return result, err
+		}
 	}
 	return result, nil
 }

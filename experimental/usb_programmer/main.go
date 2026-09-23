@@ -3,35 +3,48 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/sappsys/teltonika/experimental/usb_programmer/usb"
 )
 
 func main() {
-	configPath := flag.String("config", "", "config file: .cfg (Configurator gzip) or plain text (.txt)")
+	configPath := flag.String("config", "", "config file: .cfg (Configurator) or plain text (.txt / .cfg.txt)")
 	rootPath := flag.String("root", "", "optional root CA PEM")
 	keyPath := flag.String("key", "", "optional private key PEM")
 	certPath := flag.String("cert", "", "optional device certificate PEM")
 	port := flag.String("port", "", "serial port (default: probe USB candidates)")
-	clearCerts := flag.Bool("clear-certs", false, "delete TLS PEMs (also done before cert upload)")
-	skipReset := flag.Bool("skip-reset", false, "do not factory-reset before programming")
+	clearCerts := flag.Bool("clear-certs", false, "delete TLS PEMs from device (also done before --root/--key/--cert upload)")
+	skipReset := flag.Bool("skip-reset", false, "do not factory-reset before programming (debug)")
+	noReboot := flag.Bool("no-reboot", false, "do not send .reset after successful programming")
 	stepTimeout := flag.Duration("timeout", usb.DefaultStepTimeout, "hard deadline per programming step")
-	retries := flag.Int("retries", 0, "restart from the beginning N times on failure")
-	verbose := flag.Bool("v", false, "verbose protocol trace + diagnostics on stderr")
+	retries := flag.Int("retries", 0, "on failure, restart from the beginning this many times")
+	keywordFlag := flag.String("keyword", "", "Configurator keyword (skip interactive prompt)")
+	verbose := flag.Bool("v", false, "verbose: protocol trace + extra diagnostics on stderr")
 	flag.Parse()
 
-	progress := func(msg string) { fmt.Println(msg) }
+	progress := func(msg string) {
+		fmt.Println(msg)
+	}
 	fail := func(reason string) {
 		fmt.Printf("Status Fail (%s)\n", reason)
 		os.Exit(1)
 	}
+	var verboseFn func(string)
+	if *verbose {
+		verboseFn = func(msg string) {
+			fmt.Fprintln(os.Stderr, msg)
+		}
+	}
 
 	certsWanted := *rootPath != "" || *keyPath != "" || *certPath != ""
-	if *configPath == "" && !*clearCerts {
+	wantConfig := *configPath != ""
+	if !wantConfig && !*clearCerts && !certsWanted {
 		fmt.Fprintf(os.Stderr, `EXPERIMENTAL — usb_programmer (Teltonika USB Configurator protocol)
 
 Usage:
@@ -44,11 +57,13 @@ Usage:
   --clear-certs       delete device TLS PEMs
   --port PATH         serial device (default: auto-probe)
   --skip-reset        skip cfg_default
+  --no-reboot         skip .reset after successful programming
   --timeout DUR       per-step deadline (default 20s)
   --retries N         full restarts on failure
+  --keyword WORD      Configurator keyword (letters/digits, ≥4; skips prompt)
   -v                  verbose
 
-WARNING: writes device configuration. Tested only on FMB020 and FMC920.
+WARNING: writes device configuration. Tested on FMB020, FMC920, and FMP100.
 See README.md in this directory.
 
 `)
@@ -58,17 +73,46 @@ See README.md in this directory.
 		fail("--retries must be >= 0")
 	}
 
-	opt := usb.ProgramOptions{
-		SkipReset:   *skipReset,
-		ClearCerts:  *clearCerts || certsWanted,
-		StepTimeout: *stepTimeout,
-		Progress:    progress,
-	}
-	if *verbose {
-		opt.Verbose = func(msg string) { fmt.Fprintln(os.Stderr, msg) }
+	flagKeyword := strings.TrimSpace(*keywordFlag)
+	if flagKeyword != "" {
+		if err := usb.ValidateKeyword(flagKeyword); err != nil {
+			fail("--keyword: " + err.Error())
+		}
 	}
 
-	if *configPath != "" {
+	cachedKeyword := flagKeyword
+	promptKeyword := func() (string, error) {
+		if cachedKeyword != "" {
+			if flagKeyword != "" && cachedKeyword == flagKeyword {
+				fmt.Println("Using --keyword")
+			} else {
+				fmt.Println("Using cached Configurator keyword")
+			}
+			return cachedKeyword, nil
+		}
+		fmt.Print("Configurator keyword (Ctrl-C to abort): ")
+		line, err := bufio.NewReader(os.Stdin).ReadString('\n')
+		if err != nil {
+			return "", err
+		}
+		kw := strings.TrimSpace(line)
+		if kw != "" {
+			cachedKeyword = kw
+		}
+		return kw, nil
+	}
+
+	opt := usb.ProgramOptions{
+		SkipReset:     *skipReset,
+		SkipReboot:    *noReboot,
+		ClearCerts:    *clearCerts || certsWanted,
+		StepTimeout:   *stepTimeout,
+		Progress:      progress,
+		Verbose:       verboseFn,
+		PromptKeyword: promptKeyword,
+	}
+
+	if wantConfig {
 		doc, err := usb.LoadConfig(*configPath)
 		if err != nil {
 			fail("config: " + err.Error())
@@ -132,7 +176,7 @@ See README.md in this directory.
 			}
 			fail(lastErr.Error())
 		}
-		if *verbose {
+		if verboseFn != nil {
 			client.SetLogger(func(format string, args ...any) {
 				fmt.Fprintf(os.Stderr, format+"\n", args...)
 			})
@@ -149,6 +193,9 @@ See README.md in this directory.
 			fmt.Println("Status Complete")
 			return
 		}
+		if strings.Contains(err.Error(), "keyword rejected") {
+			cachedKeyword = ""
+		}
 		lastErr = err
 		if attempt < attempts {
 			progress(fmt.Sprintf("Status Fail (%s) — will retry", err.Error()))
@@ -162,21 +209,25 @@ func waitForDevice(prefer string, timeout time.Duration) (string, error) {
 	if timeout <= 0 {
 		timeout = usb.DefaultStepTimeout
 	}
-	type result struct {
-		port string
-		err  error
-	}
-	ch := make(chan result, 1)
-	go func() {
+	deadline := time.Now().Add(timeout)
+	var lastErr error
+	for {
 		port, _, err := usb.FindTracker(prefer)
-		ch <- result{port, err}
-	}()
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-	select {
-	case r := <-ch:
-		return r.port, r.err
-	case <-timer.C:
-		return "", &usb.StepTimeoutError{Step: "Waiting for device", Timeout: timeout}
+		if err == nil {
+			return port, nil
+		}
+		lastErr = err
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			if lastErr != nil {
+				return "", lastErr
+			}
+			return "", &usb.StepTimeoutError{Step: "Waiting for device", Timeout: timeout}
+		}
+		sleep := 2 * time.Second
+		if sleep > remaining {
+			sleep = remaining
+		}
+		time.Sleep(sleep)
 	}
 }
