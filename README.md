@@ -5,10 +5,10 @@ Go library for decoding and encoding [Teltonika](https://teltonika-gps.com/) tra
 
 **Module path:** [`github.com/sappsys/teltonika`](https://github.com/sappsys/teltonika)
 
-**Latest release:** [v1.0.5](https://github.com/sappsys/teltonika/releases/tag/v1.0.5) — see [`CHANGELOG.txt`](CHANGELOG.txt)
+**Latest release:** [v1.0.6](https://github.com/sappsys/teltonika/releases/tag/v1.0.6) — see [`CHANGELOG.txt`](CHANGELOG.txt)
 
 ```bash
-go get github.com/sappsys/teltonika@v1.0.5
+go get github.com/sappsys/teltonika@v1.0.6
 ```
 
 This repository is the **Sappsys / Tracker247** maintained distribution of the Teltonika codec
